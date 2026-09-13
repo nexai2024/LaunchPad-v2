@@ -351,14 +351,29 @@ export default function HomePage() {
         breadcrumb={[t('home.breadcrumb')]}
         right={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Link
+              href="/dossier"
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: 'var(--accent-ink)',
+                background: 'var(--accent-wash)',
+                padding: '4px 10px',
+                borderRadius: 999,
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+              }}
+            >
+              <Icon d={I.sparkles} size={12} />
+              Marketing Dossier
+            </Link>
             <span className="lp-mono" style={{ fontSize: 10 }}>
               {stats.total_projects !== 1
                 ? t('home.project-count-many', { count: stats.total_projects })
                 : t('home.project-count-one', { count: stats.total_projects })}
             </span>
-            {/* Settings lives on the NavRail, which only mounts INSIDE a
-                project — so from the projects root there was no way to reach
-                your account at all. This is that door. */}
             <Link
               href="/settings"
               title={t('nav.settings')}
