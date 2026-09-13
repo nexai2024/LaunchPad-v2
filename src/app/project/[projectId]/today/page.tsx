@@ -1,17 +1,14 @@
 'use client';
 
 /**
- * Today — full-width project dashboard: "where am I + what needs me".
+ * Today — Slate & Blue Command Hub Dashboard.
  *
- * Layout (full width, no narrow column):
- *   - Adaptive onboarding nudge + the Score strip (Project Score + IRL), pinned top.
- *   - A two-column grid (.lp-home-grid, collapses under ~900px):
- *       primary  → StageCard (the journey/validation card; its evidence checks
- *                  ARE the "next to validate" list — no separate panel duplicates it).
- *       secondary → Watchers (compact rows → Inbox), the Inbox preview, and Notes.
- *   - The Ecosystem graph spans full width below the grid.
- * A pending-signals line deep-links to the Signals lane. Everything reviews in
- * /actions — the unified Inbox is the canonical review surface.
+ * Integrated layout:
+ *   - Hero Status Banner: Radial/bar visual metrics, current active gate status, and priority actions.
+ *   - Two-column Command Grid:
+ *       primary   → Phase Spine, StageCard & Loop History.
+ *       secondary → Active Watchers, Inbox Feed, and Notes.
+ *   - Full-width Ecosystem Graph card.
  */
 
 import { use } from 'react';
@@ -36,8 +33,6 @@ import { laneFor, isIntelInboxType } from '@/lib/action-lanes';
 import type { PendingActionType } from '@/types';
 import { LoadingState } from '@/components/ui/LoadingState';
 
-// Mirror of the /actions Intel hide flag — keeps the Today "Intel" panel in
-// lock-step with the full surface. See actions/page.tsx + action-lanes.ts.
 const INTEL_HIDDEN = process.env.NEXT_PUBLIC_INTEL_HIDDEN === '1';
 
 interface PendingAction {
@@ -52,17 +47,10 @@ export default function TodayPage({ params }: { params: Promise<{ projectId: str
   const { projectId } = use(params);
   const { count: inboxBadge } = useOpenActionCount(projectId);
 
-  // One list fetch covers both the inbox preview (top 3 rows) and the
-  // pending-signals count (signal_alert rows live in pending_actions too).
-  // Invalidates via the event bridge (lp-actions-changed → actions topic,
-  // see src/lib/query-events.ts).
   const { data: actionsList, isLoading: actionsLoading, isError: actionsError } = useQuery<PendingAction[]>({
     queryKey: ['actions', projectId, 'preview'],
     enabled: !!projectId,
     queryFn: async () => {
-      // Throw on failure instead of returning [] — a swallowed error made the
-      // header claim "Nothing pending right now" during an API outage (the
-      // founder was told the inbox is clear when nothing had loaded at all).
       const res = await fetch(`/api/projects/${projectId}/actions?status=pending,edited&limit=50`);
       if (!res.ok) throw new Error(`actions fetch failed: ${res.status}`);
       const body = await res.json();
@@ -72,17 +60,10 @@ export default function TodayPage({ params }: { params: Promise<{ projectId: str
   });
 
   const allPending = actionsList ?? [];
-  // The Today "Intel" panel mirrors the /actions Intel inbox: WATCHER OUTPUT
-  // only (signal_alert + intelligence_brief), so the preview never shows the
-  // knowledge-proposal clutter the founder asked to drop for the alpha.
   const intelPending = allPending.filter((a) => isIntelInboxType(a.action_type));
   const actions = intelPending.slice(0, 3);
   const signalCount = allPending.filter((a) => laneFor(a.action_type) === 'signal').length;
 
-  // Same query key MonitorListPanel below uses — shares its cache entry
-  // (no duplicate fetch) — read here only to know whether ANY watcher exists,
-  // so the StatusBar heartbeat doesn't claim a "weekly cadence" that isn't
-  // running yet (day-1 founder, zero watchers configured).
   const { data: watchers } = useQuery<{ id: string }[]>({
     queryKey: ['watchers', projectId],
     enabled: !!projectId,
@@ -95,13 +76,6 @@ export default function TodayPage({ params }: { params: Promise<{ projectId: str
   });
   const hasWatchers = (watchers?.length ?? 0) > 0;
 
-  // Publish this page's chrome bits to the persistent layout (TopBar breadcrumb +
-  // right pill, StatusBar). No invented runtime state here — this page only knows
-  // pending actions (incl. signal rows), so the bar reports exactly that plus the
-  // watchers' documented weekly scan cadence.
-  // No TopBar `right` pill: the pending count is redundant with the Inbox
-  // nav-rail badge, and its zero-state ("0 pending") was header noise the
-  // founder asked to drop.
   useSetChrome(
     {
       breadcrumb: [t('today.breadcrumb-project'), t('today.breadcrumb-home')],
@@ -125,118 +99,172 @@ export default function TodayPage({ params }: { params: Promise<{ projectId: str
         background: 'var(--paper)',
       }}
     >
-          <header style={{ marginBottom: 24 }}>
-            <h1
-              className="lp-serif"
-              style={{ margin: 0, fontSize: 28, fontWeight: 400, letterSpacing: -0.6, lineHeight: 1.1 }}
+      {/* Command Hub Header Banner */}
+      <header
+        style={{
+          marginBottom: 24,
+          padding: '20px 24px',
+          borderRadius: 14,
+          background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%)',
+          border: '1px solid rgba(59, 130, 246, 0.25)',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 20,
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: '#60A5FA',
+                background: 'rgba(59, 130, 246, 0.15)',
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+              }}
             >
-              {greeting(t)}.
-            </h1>
-            <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--ink-4)' }}>
-              {/* Never render the "nothing pending" all-clear off a FAILED
-                  fetch — during an outage that line is a lie. */}
-              {actionsError ? t('today.status-unavailable') : summarize(t, inboxBadge, signalCount)}
-            </p>
-          </header>
+              COMMAND HUB
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>•</span>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>Project Dashboard</span>
+          </div>
+          <h1
+            className="lp-serif"
+            style={{ margin: 0, fontSize: 26, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.2 }}
+          >
+            {greeting(t)}.
+          </h1>
+          <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--ink-3)' }}>
+            {actionsError ? t('today.status-unavailable') : summarize(t, inboxBadge, signalCount)}
+          </p>
+        </div>
 
-          {actionsLoading && !actionsList ? (
-            <SkeletonRow />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-              {/* Full-width: adaptive onboarding nudge + the score strip (pinned top).
-                  Each panel is boundary-wrapped so one render throw degrades to a
-                  muted card instead of taking down the whole dashboard. */}
+        {/* Action Triggers */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Link
+            href={`/project/${projectId}/chat`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 16px',
+              borderRadius: 8,
+              background: 'linear-gradient(90deg, #3B82F6 0%, #2563EB 100%)',
+              color: '#FFFFFF',
+              fontSize: 12,
+              fontWeight: 600,
+              textDecoration: 'none',
+              boxShadow: '0 0 16px rgba(59, 130, 246, 0.4)',
+              transition: 'transform 0.15s ease',
+            }}
+          >
+            <Icon d={I.chat} size={14} />
+            <span>Open Co-Pilot</span>
+          </Link>
+          <Link
+            href={`/project/${projectId}/actions`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 16px',
+              borderRadius: 8,
+              background: 'rgba(30, 41, 59, 0.8)',
+              color: 'var(--ink-2)',
+              border: '1px solid var(--line-2)',
+              fontSize: 12,
+              fontWeight: 500,
+              textDecoration: 'none',
+            }}
+          >
+            <Icon d={I.tickets} size={14} />
+            <span>Inbox ({inboxBadge})</span>
+          </Link>
+        </div>
+      </header>
+
+      {actionsLoading && !actionsList ? (
+        <SkeletonRow />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <PanelBoundary resetKey={projectId}>
+            <OnboardingCard projectId={projectId} />
+          </PanelBoundary>
+          <PanelBoundary resetKey={projectId}>
+            <ScorePanel projectId={projectId} />
+          </PanelBoundary>
+
+          <PanelBoundary resetKey={projectId}>
+            <LoopStatusRow projectId={projectId} />
+          </PanelBoundary>
+
+          <div className="lp-home-grid">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
               <PanelBoundary resetKey={projectId}>
-                <OnboardingCard projectId={projectId} />
+                <PhaseSpine projectId={projectId} />
               </PanelBoundary>
               <PanelBoundary resetKey={projectId}>
-                <ScorePanel projectId={projectId} />
+                <StageCard projectId={projectId} />
               </PanelBoundary>
-
-              {/* Loop banner — renders only when a validation loop is open, so a
-                  founder can't miss that a loop is driving the locked skills /
-                  review card. Boundary-wrapped (network-driven). */}
               <PanelBoundary resetKey={projectId}>
-                <LoopStatusRow projectId={projectId} />
-              </PanelBoundary>
-
-              {/* Two-column dashboard: wide Journey column + narrow utility column.
-                  Collapses to one column under ~900px (.lp-home-grid). */}
-              <div className="lp-home-grid">
-                {/* Primary — the journey/validation card (its checks ARE the
-                    "next to validate" list, so no separate panel duplicates it),
-                    the 5-phase spine above it, and the loop-verdict history
-                    below (Evidence Matrix read surface — self-hides while the
-                    project has no resolved loops). */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
-                  <PanelBoundary resetKey={projectId}>
-                    <PhaseSpine projectId={projectId} />
-                  </PanelBoundary>
-                  <PanelBoundary resetKey={projectId}>
-                    <StageCard projectId={projectId} />
-                  </PanelBoundary>
-                  <PanelBoundary resetKey={projectId}>
-                    <LoopHistoryCard projectId={projectId} />
-                  </PanelBoundary>
-                </div>
-
-                {/* Secondary — Watchers, Intel, Notes. Boundary-wrapped like the
-                    primary column: MonitorListPanel is network-driven (a plausible
-                    thrower), and an unwrapped throw here bubbles to the route
-                    error.tsx and takes down the whole Home page. */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                  <PanelBoundary resetKey={projectId}>
-                    <Panel
-                      dataTour="watchers-panel"
-                      label={t('today.watchers')}
-                      icon={I.signal}
-                      href={`/project/${projectId}/actions?lane=monitor`}
-                      hrefLabel={t('today.open-inbox')}
-                      empty={null}
-                    >
-                      <MonitorListPanel projectId={projectId} compact limit={4} title="" />
-                      {signalCount > 0 && (
-                        <Link
-                          href={`/project/${projectId}/actions?lane=signal`}
-                          style={{
-                            display: 'block',
-                            padding: '6px 12px',
-                            fontSize: 11,
-                            color: 'var(--ink-4)',
-                            textDecoration: 'none',
-                            fontFamily: 'var(--f-mono)',
-                            borderTop: '1px solid var(--line)',
-                          }}
-                        >
-                          {t('today.signals-awaiting-review', { count: signalCount })}
-                        </Link>
-                      )}
-                    </Panel>
-                  </PanelBoundary>
-                  {!INTEL_HIDDEN && (
-                    <PanelBoundary resetKey={projectId}>
-                      <InboxPanel projectId={projectId} actions={actions} totalCount={intelPending.length} errored={actionsError} />
-                    </PanelBoundary>
-                  )}
-                  <PanelBoundary resetKey={projectId}>
-                    <NotesCard projectId={projectId} />
-                  </PanelBoundary>
-                </div>
-              </div>
-
-              {/* Full-width: the ecosystem graph gets the whole width to breathe. */}
-              <PanelBoundary resetKey={projectId}>
-                <EcosystemPanel projectId={projectId} />
+                <LoopHistoryCard projectId={projectId} />
               </PanelBoundary>
             </div>
-          )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <PanelBoundary resetKey={projectId}>
+                <Panel
+                  dataTour="watchers-panel"
+                  label={t('today.watchers')}
+                  icon={I.signal}
+                  href={`/project/${projectId}/actions?lane=monitor`}
+                  hrefLabel={t('today.open-inbox')}
+                  empty={null}
+                >
+                  <MonitorListPanel projectId={projectId} compact limit={4} title="" />
+                  {signalCount > 0 && (
+                    <Link
+                      href={`/project/${projectId}/actions?lane=signal`}
+                      style={{
+                        display: 'block',
+                        padding: '8px 12px',
+                        fontSize: 11,
+                        color: 'var(--accent-ink)',
+                        textDecoration: 'none',
+                        fontFamily: 'var(--f-mono)',
+                        borderTop: '1px solid var(--line)',
+                      }}
+                    >
+                      {t('today.signals-awaiting-review', { count: signalCount })}
+                    </Link>
+                  )}
+                </Panel>
+              </PanelBoundary>
+              {!INTEL_HIDDEN && (
+                <PanelBoundary resetKey={projectId}>
+                  <InboxPanel projectId={projectId} actions={actions} totalCount={intelPending.length} errored={actionsError} />
+                </PanelBoundary>
+              )}
+              <PanelBoundary resetKey={projectId}>
+                <NotesCard projectId={projectId} />
+              </PanelBoundary>
+            </div>
+          </div>
+
+          <PanelBoundary resetKey={projectId}>
+            <EcosystemPanel projectId={projectId} />
+          </PanelBoundary>
+        </div>
+      )}
     </div>
   );
 }
-
-// =============================================================================
-// Panels
-// =============================================================================
 
 function InboxPanel({
   projectId,
@@ -247,7 +275,6 @@ function InboxPanel({
   projectId: string;
   actions: PendingAction[];
   totalCount: number;
-  /** The actions fetch failed — show an error line, NOT the empty state. */
   errored?: boolean;
 }) {
   const t = useT();
@@ -274,7 +301,7 @@ function InboxPanel({
             color: 'inherit',
             transition: 'background .1s',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--paper-2)'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--paper-3)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -282,7 +309,7 @@ function InboxPanel({
               {a.title}
             </div>
           </div>
-          <span className="lp-mono" style={{ fontSize: 10, color: 'var(--ink-5)' }}>
+          <span className="lp-mono" style={{ fontSize: 10, color: 'var(--ink-4)' }}>
             {humanAge(a.created_at)}
           </span>
         </Link>
@@ -294,7 +321,7 @@ function InboxPanel({
             display: 'block',
             padding: '6px 12px',
             fontSize: 11,
-            color: 'var(--ink-4)',
+            color: 'var(--accent-ink)',
             textDecoration: 'none',
             fontFamily: 'var(--f-mono)',
           }}
@@ -305,10 +332,6 @@ function InboxPanel({
     </Panel>
   );
 }
-
-// =============================================================================
-// Local primitives
-// =============================================================================
 
 function Panel({
   label,
@@ -325,7 +348,6 @@ function Panel({
   hrefLabel: string;
   empty: string | null;
   children: React.ReactNode;
-  /** Onboarding-walkthrough anchor (see tour-steps.ts). */
   dataTour?: string;
 }) {
   return (
@@ -336,6 +358,7 @@ function Panel({
         border: '1px solid var(--line)',
         borderRadius: 'var(--r-l)',
         overflow: 'hidden',
+        boxShadow: 'var(--shadow-card)',
       }}
     >
       <header
@@ -345,9 +368,10 @@ function Panel({
           display: 'flex',
           alignItems: 'center',
           gap: 8,
+          background: 'rgba(15, 23, 42, 0.5)',
         }}
       >
-        <Icon d={icon} size={13} stroke={1.4} style={{ color: 'var(--ink-3)' }} />
+        <Icon d={icon} size={13} stroke={1.4} style={{ color: 'var(--accent-ink)' }} />
         <h2
           style={{
             margin: 0,
@@ -355,7 +379,7 @@ function Panel({
             fontWeight: 600,
             textTransform: 'uppercase',
             letterSpacing: 0.5,
-            color: 'var(--ink-3)',
+            color: 'var(--ink-2)',
           }}
         >
           {label}
@@ -365,7 +389,7 @@ function Panel({
           href={href}
           style={{
             fontSize: 11,
-            color: 'var(--ink-3)',
+            color: 'var(--accent-ink)',
             textDecoration: 'none',
             fontFamily: 'var(--f-mono)',
             display: 'inline-flex',
@@ -377,13 +401,13 @@ function Panel({
           <Icon d={I.arrow} size={10} stroke={1.4} />
         </Link>
       </header>
-      <div style={{ padding: 6 }}>
+      <div style={{ padding: 8 }}>
         {empty ? (
           <div
             style={{
               padding: '14px 12px',
               fontSize: 12,
-              color: 'var(--ink-5)',
+              color: 'var(--ink-4)',
               textAlign: 'center',
               fontStyle: 'italic',
             }}
@@ -400,19 +424,12 @@ function Panel({
 
 function SkeletonRow() {
   const t = useT();
-  // Was centred mono text — a label with no sign of life, so a slow load read
-  // as a stalled one. LoadingState animates and counts, so the founder can tell
-  // "still working" from "stuck".
   return (
     <div style={{ padding: 24, display: 'flex', justifyContent: 'center' }}>
       <LoadingState label={t('today.loading-today')} />
     </div>
   );
 }
-
-// =============================================================================
-// Helpers
-// =============================================================================
 
 type TFn = (key: MessageKey, vars?: TranslateVars) => string;
 
