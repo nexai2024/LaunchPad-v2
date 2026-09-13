@@ -1,24 +1,8 @@
 /**
  * Design-system chrome — TopBar + NavRail.
  *
- * Two-section nav:
- *
- *   PRIMARY (top):
- *     dashboard → /project/{id}/today  (project stage + todos + signal log)
- *
- *   CHANNELS (bottom):
- *     inbox     → /project/{id}/actions    (pending actions)
- *     signals   → /project/{id}/signals    (briefs + findings)
- *     knowledge → /project/{id}/knowledge  (uploads)
- *     grants    → /project/{id}/grants     (open EU + Lombardia funding calls)
- *     chat      → /project/{id}/chat       (Co-pilot — chat + single-scroll
- *                                           Canvas, grouped by department)
- *
- * Departments still live as data in src/lib/departments.ts — they own
- * tables and chat-tool prefixes — but they no longer have their own
- * routes. The Canvas is one department-grouped scroll inside the
- * Co-pilot (the facet tabs were removed in the 2026-06 simplification);
- * Canvas as a concept lives in the chat page, not the sidebar.
+ * Modernized chrome with backdrop blur, polished active states,
+ * refined iconography and alignment.
  */
 
 'use client';
@@ -38,18 +22,13 @@ import { useT } from '@/components/providers/LocaleProvider';
 import type { MessageKey } from '@/lib/i18n/messages';
 
 // =============================================================================
-// TopBar — 38px, brand mark + breadcrumbs + right slot
+// TopBar
 // =============================================================================
 
 export interface TopBarProps {
   breadcrumb?: string[];
   right?: React.ReactNode;
-  /** When set, renders a Share button on the right that opens the per-project
-   *  sharing dialog. Optional so non-project surfaces (login, projects index)
-   *  can omit it. Renders BEFORE the page's `right` content so positional
-   *  ordering stays consistent across pages. */
   projectId?: string;
-  /** Legacy prop from design — accepted but ignored; theme is global. */
   theme?: 'paper' | 'ink';
 }
 
@@ -58,28 +37,23 @@ export function TopBar({ breadcrumb, right, projectId }: TopBarProps) {
   return (
     <div
       style={{
-        height: 38,
+        height: 42,
         flexShrink: 0,
         borderBottom: '1px solid var(--line)',
         background: 'var(--surface)',
+        backdropFilter: 'var(--glass-backdrop)',
         display: 'flex',
         alignItems: 'center',
-        padding: '0 12px',
+        padding: '0 16px',
         gap: 12,
+        zIndex: 20,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-        {/* Brand mark — SenseFound logomark + wordmark (V1.1 guidelines: the
-            protective bracket + validation arrow is the brand's identity). The
-            logomark links home; the wordmark is hidden on narrow widths. */}
-        <Link href="/" aria-label={t('nav.home-aria')} style={{ display: 'flex', alignItems: 'center', gap: 7, textDecoration: 'none', flexShrink: 0 }}>
-          {/* SenseFound logomark (brand symbol) + LaunchPad wordmark (product
-              name). 22px = the brand's documented minimum logo size (p.12). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+        <Link href="/" aria-label={t('nav.home-aria')} style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', flexShrink: 0 }}>
           <Logomark size={22} />
-          {/* Wordmark in the display/sans face (Safiro stand-in), NOT mono —
-              the brand wordmark is a grotesque semibold, uppercase, tight. */}
           <span
-            style={{ fontFamily: 'var(--f-display)', fontSize: 13, fontWeight: 700, letterSpacing: '.02em', color: 'var(--ink)' }}
+            style={{ fontFamily: 'var(--f-display)', fontSize: 13, fontWeight: 700, letterSpacing: '.03em', color: 'var(--ink)' }}
           >
             LAUNCHPAD
           </span>
@@ -100,7 +74,7 @@ export function TopBar({ breadcrumb, right, projectId }: TopBarProps) {
             {breadcrumb.map((b, i) => (
               <React.Fragment key={`${b}-${i}`}>
                 {i > 0 && <Icon d={I.chevr} size={10} style={{ opacity: 0.5 }} />}
-                <span style={{ color: i === breadcrumb.length - 1 ? 'var(--ink)' : 'var(--ink-4)' }}>
+                <span style={{ color: i === breadcrumb.length - 1 ? 'var(--ink)' : 'var(--ink-4)', fontWeight: i === breadcrumb.length - 1 ? 500 : 400 }}>
                   {b}
                 </span>
               </React.Fragment>
@@ -108,20 +82,11 @@ export function TopBar({ breadcrumb, right, projectId }: TopBarProps) {
           </span>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-4)' }}>
-        {/* Docs drawer — every generated deliverable + upload for the project.
-            Sits before Share so the two per-project icons read docs → people. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--ink-4)' }}>
         {projectId && <DocsButton projectId={projectId} />}
         {projectId && <ShareButton projectId={projectId} />}
         {right}
         <LanguageSwitch readOnly={!!projectId} />
-        {/* CreditsBadge sits *after* page-supplied `right` content so the
-            credits chip is always pinned to the far right — making the
-            credit balance the founder's most-visible header signal. The
-            badge owns its own TanStack cache + event-bridge subscription,
-            so mounting it globally costs one query per project per session
-            (no per-route re-fetch). The title-wrapping span keeps the
-            tooltip in chrome.tsx without touching CreditsBadge itself. */}
         {projectId && (
           <span title={t('credits.chip-tooltip')}>
             <CreditsBadge projectId={projectId} />
@@ -133,25 +98,19 @@ export function TopBar({ breadcrumb, right, projectId }: TopBarProps) {
 }
 
 // =============================================================================
-// NavRail — 54px left icon rail with micro labels
+// NavRail
 // =============================================================================
 
 interface NavItem {
   id: string;
   iconKey: IconKey;
-  /** Optional custom glyph (overrides iconKey) for icons not in the shared set. */
   icon?: React.ReactNode;
-  /** i18n key for the micro label — resolved via useT() at render. */
   labelKey: MessageKey;
-  /** Path segment after /project/{id}/ — e.g. 'dashboard', 'chat' */
   route: string;
-  /** If true, highlight when pathname segment matches `route` loosely */
   fuzzy?: boolean;
-  /** i18n key for the longer hover tooltip. Falls back to label when omitted. */
   tooltipKey?: MessageKey;
 }
 
-// Primary nav — the project landing surface (project stage + todos + signal log).
 const PRIMARY_ITEMS: NavItem[] = [
   { id: 'dashboard', iconKey: 'home', labelKey: 'nav.home', route: 'today',
     tooltipKey: 'nav.home.tooltip' },
@@ -159,19 +118,11 @@ const PRIMARY_ITEMS: NavItem[] = [
     tooltipKey: 'nav.build.tooltip' },
 ];
 
-// Feature flag: the Build & Launch Hub ships behind NEXT_PUBLIC_BUILD_ENABLED so
-// it can be live on staging (=1) while staying hidden in prod until GA. Inlined at
-// build time. This only hides the NAV entry — the /build route stays reachable by
-// URL for QA.
 const BUILD_NAV_ENABLED = process.env.NEXT_PUBLIC_BUILD_ENABLED === '1';
 const VISIBLE_PRIMARY_ITEMS = PRIMARY_ITEMS.filter(
   (it) => it.id !== 'build' || BUILD_NAV_ENABLED,
 );
 
-// Channels — cross-cutting activity surfaces shown below the divider.
-// Phase 1 consolidation (2026-06): the dedicated Signals nav was removed —
-// signal_alert + intelligence_brief now materialize into the Inbox, so the
-// channel is collapsed into the single proposal queue.
 const CHANNEL_ITEMS: NavItem[] = [
   { id: 'inbox',     iconKey: 'tickets', icon: <BinocularsGlyph />, labelKey: 'nav.inbox',     route: 'actions',
     tooltipKey: 'nav.inbox.tooltip' },
@@ -187,17 +138,12 @@ const CHANNEL_ITEMS: NavItem[] = [
 
 export interface NavRailProps {
   projectId: string;
-  /** Explicit override for which item is current. Otherwise inferred from pathname. */
   current?: string;
-  /** Badge count shown on the Inbox nav item (pending actions). */
   inboxBadge?: number;
-  /** When true, show a pulsing dot on the Co-pilot icon. */
   chatStreaming?: boolean;
 }
 
 export function NavRail({ projectId, current, inboxBadge, chatStreaming }: NavRailProps) {
-  // The chip was hardcoded to "LB" — every signed-in user, on every account,
-  // saw one particular founder's initials. /api/me already returned the email.
   const [initials, setInitials] = React.useState('··');
   React.useEffect(() => {
     let cancelled = false;
@@ -206,22 +152,18 @@ export function NavRail({ projectId, current, inboxBadge, chatStreaming }: NavRa
       .then((d) => {
         if (cancelled || !d?.email) return;
         const local = String(d.email).split('@')[0] ?? '';
-        // "ada.lovelace" → AL; "ada" → AD. Two chars either way, so the chip
-        // never reflows.
         const parts = local.split(/[._-]+/).filter(Boolean);
         const out = parts.length > 1
           ? (parts[0][0] + parts[1][0])
           : local.slice(0, 2);
         setInitials((out || '··').toUpperCase());
       })
-      .catch(() => { /* keep the neutral placeholder */ });
+      .catch(() => { });
     return () => { cancelled = true; };
   }, []);
 
   const pathname = usePathname() || '';
   const t = useT();
-  // Self-fetched (cached + shared across pages) so the "Know" count shows on
-  // every surface without each page having to thread it down as a prop.
   const { count: knowledgeCount } = useKnowledgeCount(projectId);
 
   function isActive(item: NavItem): boolean {
@@ -233,15 +175,16 @@ export function NavRail({ projectId, current, inboxBadge, chatStreaming }: NavRa
     <div
       data-tour="nav-rail"
       style={{
-        width: 54,
+        width: 56,
         flexShrink: 0,
         borderRight: '1px solid var(--line)',
         background: 'var(--paper-2)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        padding: '8px 0',
-        gap: 2,
+        padding: '10px 0',
+        gap: 4,
+        zIndex: 10,
       }}
     >
       {VISIBLE_PRIMARY_ITEMS.map((it) => (
@@ -254,8 +197,6 @@ export function NavRail({ projectId, current, inboxBadge, chatStreaming }: NavRa
           active={isActive(it)}
         />
       ))}
-      {/* Divider — separates departments (where you work) from channels
-          (how you triage). 1px line, inset 8px on each side. */}
       <div
         aria-hidden
         style={{
@@ -275,28 +216,20 @@ export function NavRail({ projectId, current, inboxBadge, chatStreaming }: NavRa
           projectId={projectId}
           active={isActive(it)}
           badge={it.id === 'inbox' ? inboxBadge : it.id === 'knowledge' ? knowledgeCount : undefined}
-          // Inbox badge = items needing action (urgent → clay). The Know badge
-          // is just an informational item count (neutral), not an alert.
           badgeTone={it.id === 'knowledge' ? 'count' : 'alert'}
           streaming={it.id === 'chat' ? chatStreaming : undefined}
         />
       ))}
-      {/* flexShrink:0 so a short viewport collapses THIS spacer (not the chip). */}
-      <div style={{ flex: 1, minHeight: 6 }} />
-      {/* Light/dark theme toggle — sits at the bottom of the rail, above the
-          account chip. Token-driven, so it re-themes the whole app instantly. */}
+      <div style={{ flex: 1, minHeight: 8 }} />
       <ThemeToggle />
-      {/* User chip — links to /settings for BYOK + model preferences.
-          flexShrink:0 keeps the 28px chip from being squeezed to nothing on a
-          short rail (item 3: the account/settings icon "sometimes disappears"). */}
       <Link
         href="/settings"
         title={t('nav.settings')}
         style={{
           flexShrink: 0,
-          width: 28,
-          height: 28,
-          borderRadius: 14,
+          width: 30,
+          height: 30,
+          borderRadius: 15,
           background: 'var(--ink)',
           color: 'var(--paper)',
           display: 'flex',
@@ -308,6 +241,8 @@ export function NavRail({ projectId, current, inboxBadge, chatStreaming }: NavRa
           marginTop: 6,
           textDecoration: 'none',
           cursor: 'pointer',
+          boxShadow: 'var(--shadow-card)',
+          transition: 'transform 0.15s ease',
         }}
       >
         {initials}
@@ -327,17 +262,17 @@ function NavRailItem({ item, label, tooltip, projectId, active, badge, badgeTone
       {...bind}
       style={{
         width: 42,
-        height: 38,
+        height: 40,
         borderRadius: 'var(--r-m)',
         cursor: 'pointer',
-        background: active ? 'var(--surface)' : 'transparent',
-        boxShadow: active ? 'inset 0 0 0 1px var(--line)' : 'none',
+        background: active ? 'var(--surface-solid)' : 'transparent',
+        boxShadow: active ? 'var(--shadow-card), inset 0 0 0 1px var(--line-2)' : 'none',
         color: active ? 'var(--ink)' : 'var(--ink-4)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         textDecoration: 'none',
-        transition: 'background .12s, color .12s',
+        transition: 'all .15s ease',
         position: 'relative',
       }}
     >
@@ -346,11 +281,11 @@ function NavRailItem({ item, label, tooltip, projectId, active, badge, badgeTone
         <span
           style={{
             position: 'absolute',
-            top: 3,
-            right: 5,
-            minWidth: 14,
-            height: 14,
-            borderRadius: 7,
+            top: 2,
+            right: 4,
+            minWidth: 15,
+            height: 15,
+            borderRadius: 8,
             background: isCount ? 'var(--paper-3)' : 'var(--clay)',
             color: isCount ? 'var(--ink-4)' : 'var(--on-accent)',
             border: isCount ? '1px solid var(--line)' : 'none',
@@ -363,6 +298,7 @@ function NavRailItem({ item, label, tooltip, projectId, active, badge, badgeTone
             justifyContent: 'center',
             padding: '0 3px',
             lineHeight: 1,
+            boxShadow: 'var(--shadow-card)',
           }}
         >
           {badge > 99 ? '99+' : badge}
@@ -378,12 +314,11 @@ function NavRailItem({ item, label, tooltip, projectId, active, badge, badgeTone
             width: 6,
             height: 6,
             background: 'var(--accent)',
+            boxShadow: '0 0 8px var(--accent)',
           }}
         />
       )}
-      {/* Section name shown on hover — the label span is gone (icon-only rail). */}
       <RailTooltip label={label} show={hover} />
     </Link>
   );
 }
-

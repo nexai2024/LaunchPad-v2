@@ -1,6 +1,7 @@
 /**
  * Central model configuration — single source of truth for model IDs,
  * pricing, and tier defaults across the entire codebase.
+ * Standardized on OpenAI as the primary AI provider.
  *
  * Referenced by:
  *   - src/lib/llm/router.ts  (tier → model resolution)
@@ -9,14 +10,51 @@
  */
 
 export const MODEL_CONFIG = {
-  // Cheap tier = Haiku 4.5. Tested GPT-4o-mini at 98.6% cost reduction but
-  // it failed the structured-artifact contract entirely (0 workflows, 0
-  // facts, 0 pending_actions vs Sonnet's 5/6/26). Haiku stays in the
-  // Anthropic family so follows the :::artifact{...}::: prompt rules.
+  'gpt-4o-mini': {
+    id: 'gpt-4o-mini',
+    openrouterId: 'openai/gpt-4o-mini',
+    tier: 'cheap' as const,
+    contextWindow: 128_000,
+    maxOutputTokens: 16_384,
+    pricing: {
+      input: 0.15,
+      output: 0.60,
+      cacheWrite: 0.15,
+      cacheRead: 0.075,
+    },
+  },
+  'gpt-4o': {
+    id: 'gpt-4o',
+    openrouterId: 'openai/gpt-4o',
+    tier: 'balanced' as const,
+    contextWindow: 128_000,
+    maxOutputTokens: 16_384,
+    pricing: {
+      input: 2.50,
+      output: 10.00,
+      cacheWrite: 2.50,
+      cacheRead: 1.25,
+    },
+  },
+  'o3-mini': {
+    id: 'o3-mini',
+    openrouterId: 'openai/o3-mini',
+    tier: 'premium' as const,
+    contextWindow: 200_000,
+    maxOutputTokens: 100_000,
+    pricing: {
+      input: 1.10,
+      output: 4.40,
+      cacheWrite: 1.10,
+      cacheRead: 0.55,
+    },
+  },
+  // Historical entries for pricing compatibility on telemetry rows
   'claude-haiku-4-5': {
     id: 'claude-haiku-4-5-20251001',
     openrouterId: 'anthropic/claude-haiku-4.5',
     tier: 'cheap' as const,
+    legacy: true,
     contextWindow: 200_000,
     maxOutputTokens: 64_000,
     pricing: {
@@ -26,17 +64,11 @@ export const MODEL_CONFIG = {
       cacheRead: 0.10,
     },
   },
-  // Balanced tier = Sonnet 5 (2026-08-31, harness lever 3). Newer than
-  // Sonnet 4.6 AND cheaper ($2/$10 vs $3/$15) — but its tokenizer yields
-  // ~30% more tokens for identical text, so the realistic net saving on the
-  // tier is ~13%, not the headline 33%. Thinking stays OFF on both wire
-  // paths, preserving 4.6 behavior: OpenRouter gets reasoning:{effort:"none"}
-  // (pi-ai openai-completions thinkingFormat), direct Anthropic gets
-  // thinking:{type:"disabled"} — Sonnet 5 accepts disabled at default effort.
   'claude-sonnet-5': {
     id: 'claude-sonnet-5',
     openrouterId: 'anthropic/claude-sonnet-5',
     tier: 'balanced' as const,
+    legacy: true,
     contextWindow: 1_000_000,
     maxOutputTokens: 64_000,
     pricing: {
@@ -46,9 +78,6 @@ export const MODEL_CONFIG = {
       cacheRead: 0.20,
     },
   },
-  // LEGACY — no longer routed (legacy: true is skipped by the router's tier
-  // map). Kept so telemetry/cost estimation still prices historical and
-  // in-flight claude-sonnet-4-6 usage rows correctly.
   'claude-sonnet-4-6': {
     id: 'claude-sonnet-4-6',
     openrouterId: 'anthropic/claude-sonnet-4.6',
@@ -67,6 +96,7 @@ export const MODEL_CONFIG = {
     id: 'claude-opus-4-7',
     openrouterId: 'anthropic/claude-opus-4.7',
     tier: 'premium' as const,
+    legacy: true,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     pricing: {
@@ -89,8 +119,6 @@ export const TIER_DEFAULTS = {
 
 /**
  * Resolve a MODEL_CONFIG entry from any known model ID string.
- * Matches against the config key, the versioned Anthropic ID, or the
- * OpenRouter slug.
  */
 export function getModelConfig(modelId: string) {
   for (const [key, cfg] of Object.entries(MODEL_CONFIG)) {

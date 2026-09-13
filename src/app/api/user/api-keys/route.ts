@@ -3,10 +3,9 @@ import { AuthError, requireUser } from '@/lib/auth/require-user';
 import { query, run, get } from '@/lib/db';
 import { encrypt, decrypt, keyHint } from '@/lib/crypto';
 import { generateId } from '@/lib/api-helpers';
-import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 
-const VALID_PROVIDERS = ['anthropic', 'openai', 'openrouter'] as const;
+const VALID_PROVIDERS = ['openai'] as const;
 type Provider = typeof VALID_PROVIDERS[number];
 
 /**
@@ -38,13 +37,13 @@ export async function POST(req: NextRequest) {
   try {
     const { userId } = await requireUser();
     const body = await req.json();
-    const { provider, label, api_key } = body as {
+    const { provider = 'openai', label, api_key } = body as {
       provider?: string; label?: string; api_key?: string;
     };
 
     if (!provider || !VALID_PROVIDERS.includes(provider as Provider)) {
       return NextResponse.json(
-        { error: `Invalid provider. Must be one of: ${VALID_PROVIDERS.join(', ')}` },
+        { error: `Invalid provider. Must be: openai` },
         { status: 400 },
       );
     }
@@ -130,34 +129,14 @@ export async function DELETE(req: NextRequest) {
  */
 async function validateApiKey(provider: Provider, apiKey: string): Promise<string | null> {
   try {
-    switch (provider) {
-      case 'anthropic': {
-        const client = new Anthropic({ apiKey });
-        // Smallest possible call — 1 token max, cheap model.
-        await client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'test' }],
-        });
-        return null;
-      }
-      case 'openai':
-      case 'openrouter': {
-        const baseURL = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : undefined;
-        const client = new OpenAI({ apiKey, baseURL });
-        await client.models.list();
-        return null;
-      }
-      default:
-        return `Unknown provider: ${provider}`;
-    }
+    const client = new OpenAI({ apiKey });
+    await client.models.list();
+    return null;
   } catch (err) {
     const msg = (err as Error).message || 'Unknown error';
     if (msg.includes('401') || msg.includes('authentication') || msg.includes('invalid')) {
       return 'Invalid API key';
     }
-    // Network errors, rate limits etc. — key might be valid but we can't verify.
-    // Accept it with a warning — the validated_at will be null.
     return null;
   }
 }
