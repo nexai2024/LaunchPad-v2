@@ -1,21 +1,12 @@
 import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
 import { pickModel, type TaskLabel } from './router';
 import { MODEL_CONFIG } from './models';
-
-// No-model fallbacks follow the balanced tier instead of a hard-coded pin —
-// the old 'claude-sonnet-4-20250514' snapshot retired in June 2026 and 404s.
-const FALLBACK_ANTHROPIC_MODEL = MODEL_CONFIG['claude-sonnet-5'].id;
-const FALLBACK_OPENROUTER_MODEL = MODEL_CONFIG['claude-sonnet-5'].openrouterId;
 import { recordUsage } from '@/lib/cost-meter';
 import { estimateCost } from '@/lib/telemetry';
 
-// Lazy-init: avoid crashing at import time when keys aren't set (gateway mode)
-let _openai: OpenAI | null = null;
-let _anthropic: Anthropic | null = null;
-let _openrouter: OpenAI | null = null;
+const FALLBACK_OPENAI_MODEL = MODEL_CONFIG['gpt-4o'].id;
 
-const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+let _openai: OpenAI | null = null;
 
 function getOpenAI(apiKeyOverride?: string): OpenAI {
   if (apiKeyOverride) {
@@ -27,38 +18,11 @@ function getOpenAI(apiKeyOverride?: string): OpenAI {
   return _openai;
 }
 
-// OpenRouter speaks OpenAI's REST shape, so we reuse the OpenAI SDK with a
-// different baseURL + key. Without this, chatJSONByTask + the chat-route
-// fallback path with provider='openrouter' silently hit api.openai.com with
-// an OpenRouter-namespaced slug (e.g. "anthropic/claude-sonnet-4.6") and 400.
-function getOpenRouter(apiKeyOverride?: string): OpenAI {
-  if (apiKeyOverride) {
-    return new OpenAI({ apiKey: apiKeyOverride, baseURL: OPENROUTER_BASE_URL });
-  }
-  if (!_openrouter) {
-    _openrouter = new OpenAI({
-      apiKey: process.env.OPENROUTER_API_KEY || 'unused',
-      baseURL: OPENROUTER_BASE_URL,
-    });
-  }
-  return _openrouter;
-}
-
-function getAnthropic(apiKeyOverride?: string): Anthropic {
-  if (apiKeyOverride) {
-    return new Anthropic({ apiKey: apiKeyOverride });
-  }
-  if (!_anthropic) {
-    _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'unused' });
-  }
-  return _anthropic;
-}
-
 type Message = { role: 'system' | 'user' | 'assistant'; content: string };
 
 /** Per-request overrides for BYOK. */
 export interface UserKeyOverride {
-  provider: 'anthropic' | 'openai' | 'openrouter';
+  provider: 'openai';
   apiKey: string;
 }
 
@@ -87,24 +51,6 @@ export async function chatJSON<T = Record<string, unknown>>(
   return JSON.parse(cleaned.trim());
 }
 
-/**
- * Task-labeled chatJSON. The router picks provider + model based on the task's
- * complexity tier (see src/lib/llm/router.ts). Use this for any new call site
- * where you'd otherwise pass a hardcoded provider.
- *
- * `projectId` is REQUIRED: token usage is always recorded via recordUsage(),
- * which handles both the DB log row and the Langfuse trace. Making it required
- * (rather than optional) prevents a caller from silently skipping metering +
- * Langfuse — every task-routed call lands in the budget and the dashboard.
- *
- * When `opts.userKey` is provided (BYOK), the per-request API key is used
- * instead of the global env var. Usage is still logged for the project but
- * tagged with key_source='user'.
- *
- * Example:
- *   const result = await chatJSONByTask<ScoreResult>(messages, 'scoring', { projectId });
- *   // routes to balanced tier (Sonnet 4.6) by default.
- */
 export async function chatJSONByTask<T = Record<string, unknown>>(
   messages: Message[],
   task: TaskLabel | string,
@@ -118,10 +64,6 @@ export async function chatJSONByTask<T = Record<string, unknown>>(
   const latencyMs = Date.now() - startedAt;
 
   if (opts.projectId) {
-    // Prefer OpenRouter's provider-reported cost when present (matches
-    // billing exactly). When absent (OpenAI / Anthropic direct), fall back
-    // to the PRICING-table estimate so the meter still records something.
-    // Shape matches cost-meter.extractCost: it looks for usage.cost.total.
     const costUsd = typeof usage.cost_usd === 'number'
       ? usage.cost_usd
       : estimateCost(provider, model, {
@@ -133,7 +75,7 @@ export async function chatJSONByTask<T = Record<string, unknown>>(
     recordUsage({
       project_id: opts.projectId,
       step: task,
-      provider,
+      provider: 'openai',
       model,
       usage: {
         input: usage.input_tokens,
@@ -158,12 +100,6 @@ export interface LLMUsage {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
-  /**
-   * Provider-reported cost in USD, when available. OpenRouter returns this
-   * directly on every response (`usage.cost`); Anthropic + OpenAI do not.
-   * When present, callers should prefer it over estimateCost() since it
-   * matches the actual invoice line.
-   */
   cost_usd?: number;
 }
 
@@ -175,66 +111,22 @@ export async function chatWithUsage(
   model?: string,
   userKey?: UserKeyOverride,
 ): Promise<{ text: string; usage: LLMUsage }> {
-  // Resolve the API key: user's BYOK key takes priority over env var.
-  const anthropicKey = userKey?.provider === 'anthropic' ? userKey.apiKey : undefined;
-  const openaiKey = userKey?.provider === 'openai' ? userKey.apiKey : undefined;
-  const openrouterKey = userKey?.provider === 'openrouter' ? userKey.apiKey : undefined;
+  const openaiKey = userKey?.apiKey;
+  const client = getOpenAI(openaiKey);
+  const resolvedModel = model || process.env.OPENAI_MODEL || FALLBACK_OPENAI_MODEL;
 
-  if (provider === 'anthropic') {
-    const system = messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n');
-    const msgs = messages.filter((m) => m.role !== 'system');
-    const response = await getAnthropic(anthropicKey).messages.create({
-      model: model || process.env.ANTHROPIC_MODEL || FALLBACK_ANTHROPIC_MODEL,
-      system,
-      messages: msgs as Anthropic.MessageParam[],
-      temperature,
-      max_tokens: maxTokens,
-    });
-    const text = response.content[0].type === 'text' ? response.content[0].text : '';
-    const u = response.usage;
-    return {
-      text,
-      usage: {
-        input_tokens: u.input_tokens ?? 0,
-        output_tokens: u.output_tokens ?? 0,
-        cache_creation_input_tokens: (u as unknown as Record<string, number>).cache_creation_input_tokens ?? 0,
-        cache_read_input_tokens: (u as unknown as Record<string, number>).cache_read_input_tokens ?? 0,
-      },
-    };
-  }
-
-  // BYOK with provider='openrouter' should be honored even if the caller
-  // passed provider='openai' (BYOK selection is the source of truth for
-  // where the key works). Same for env: when OPENROUTER_API_KEY is the only
-  // gateway configured, router.ts already returns provider='openrouter'.
-  const useOpenRouter = provider === 'openrouter' || userKey?.provider === 'openrouter';
-  const client = useOpenRouter ? getOpenRouter(openrouterKey) : getOpenAI(openaiKey);
-  // OpenRouter wants the namespaced slug (e.g. "anthropic/claude-sonnet-4.6");
-  // for OpenAI keep gpt-4o as the fallback. Router-provided `model` overrides.
-  const resolvedModel = model
-    || (useOpenRouter
-      ? process.env.OPENROUTER_MODEL || FALLBACK_OPENROUTER_MODEL
-      : process.env.OPENAI_MODEL || 'gpt-4o');
   const response = await client.chat.completions.create({
     model: resolvedModel,
     messages,
     temperature,
     max_tokens: maxTokens,
   });
-  const text = response.choices[0].message.content || '';
+  const text = response.choices[0]?.message?.content || '';
   const u = response.usage;
-  // OpenRouter mirrors Anthropic's cache token fields under a non-standard
-  // `prompt_tokens_details.cached_tokens`; carry it through so cache hits
-  // show up in llm_usage_logs.cache_read_tokens for Sonnet/Haiku via OR.
   const cachedTokens = (u as unknown as { prompt_tokens_details?: { cached_tokens?: number } })
     ?.prompt_tokens_details?.cached_tokens ?? 0;
-  // OpenRouter's authoritative cost (USD). Matches billing — preferred over
-  // estimateCost() when present. Plain OpenAI doesn't return this; leave
-  // undefined so callers fall back to PRICING-table estimation.
   const providerCost = (u as unknown as { cost?: number })?.cost;
+
   return {
     text,
     usage: {
@@ -254,36 +146,10 @@ export async function* chatStream(
   maxTokens = 4096,
   userKey?: UserKeyOverride,
 ): AsyncGenerator<string> {
-  const anthropicKey = userKey?.provider === 'anthropic' ? userKey.apiKey : undefined;
-  const openaiKey = userKey?.provider === 'openai' ? userKey.apiKey : undefined;
-  const openrouterKey = userKey?.provider === 'openrouter' ? userKey.apiKey : undefined;
+  const openaiKey = userKey?.apiKey;
+  const client = getOpenAI(openaiKey);
+  const resolvedModel = process.env.OPENAI_MODEL || FALLBACK_OPENAI_MODEL;
 
-  if (provider === 'anthropic') {
-    const system = messages
-      .filter((m) => m.role === 'system')
-      .map((m) => m.content)
-      .join('\n');
-    const msgs = messages.filter((m) => m.role !== 'system');
-    const stream = getAnthropic(anthropicKey).messages.stream({
-      model: process.env.ANTHROPIC_MODEL || FALLBACK_ANTHROPIC_MODEL,
-      system,
-      messages: msgs as Anthropic.MessageParam[],
-      temperature,
-      max_tokens: maxTokens,
-    });
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        yield event.delta.text;
-      }
-    }
-    return;
-  }
-
-  const useOpenRouter = provider === 'openrouter' || userKey?.provider === 'openrouter';
-  const client = useOpenRouter ? getOpenRouter(openrouterKey) : getOpenAI(openaiKey);
-  const resolvedModel = useOpenRouter
-    ? process.env.OPENROUTER_MODEL || FALLBACK_OPENROUTER_MODEL
-    : process.env.OPENAI_MODEL || 'gpt-4o';
   const stream = await client.chat.completions.create({
     model: resolvedModel,
     messages,
@@ -293,6 +159,6 @@ export async function* chatStream(
   });
   for await (const chunk of stream) {
     const delta = chunk.choices[0]?.delta?.content;
-    if (delta) {yield delta;}
+    if (delta) { yield delta; }
   }
 }

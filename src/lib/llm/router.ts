@@ -1,19 +1,6 @@
 /**
  * Task-complexity-based model router.
- *
- * Every LLM call in SenseFound tags itself with a `TaskLabel` describing what
- * kind of work it's doing. The router maps labels to tiers, and tiers to
- * concrete {provider, model} tuples. This gives us three levers:
- *
- * 1. Route cheap work (summarization, classification) to Haiku instead of
- *    Sonnet — same quality, ~4x cheaper. Roadmap KPI target 3.1 (<€0.25 per
- *    user/month) depends on this.
- * 2. Route high-value long-horizon work (scaling-plan, 52-week milestones)
- *    to Opus — Sonnet's reasoning depth occasionally falls short on these.
- * 3. Override per deployment via LLM_ROUTING_JSON env var without a redeploy.
- *
- * The default for any task not explicitly mapped is `balanced` (Sonnet) —
- * quality-first policy so new routes don't silently degrade.
+ * Standardized on OpenAI as the primary AI provider.
  */
 
 import { MODEL_CONFIG, TIER_DEFAULTS } from './models';
@@ -39,56 +26,32 @@ export type TaskLabel =
   | 'heartbeat-reflect'  // daily agent self-reflection
   | 'heartbeat-propose'  // daily heartbeat task proposer (cheap)
   | 'skill-invoke'       // agent invoking a registered skill as a tool
-  | 'risk-analysis'      // structured risk audit (roadmap 1.1)
-  | 'task-expand'        // task-expansion turn (break a TODO into subtasks)
-  | 'signal-classify'    // watch-source change significance classification (cheap)
-  | 'signal-correlate'   // cross-signal correlation synthesis (balanced/Sonnet)
-  | 'skill-premium'      // premium-tier skill runs (landing page, pitch deck)
-  | 'chat-followup'      // simple chat follow-ups routed to Haiku
-  | 'assumption-extract'; // Franzagos-style assumption extractor pass (balanced/Sonnet)
+  | 'risk-analysis'      // structured risk audit
+  | 'task-expand'        // task-expansion turn
+  | 'signal-classify'    // watch-source change classification (cheap)
+  | 'signal-correlate'   // cross-signal correlation synthesis
+  | 'skill-premium'      // premium-tier skill runs
+  | 'chat-followup'      // simple chat follow-ups
+  | 'assumption-extract'; // assumption extractor pass
 
 type ResolvedModel = {
-  provider: 'anthropic' | 'openrouter';
+  provider: 'openai';
   model: string;
   tier: ModelTier;
   maxTokens: number;
 };
 
-// Provider selection:
-//   - OPENROUTER_API_KEY set → route via OpenRouter (single gateway, single
-//     invoice, fallback between providers). Model slugs use OpenRouter's
-//     namespaced format (e.g. "anthropic/claude-sonnet-4.6").
-//   - otherwise → direct Anthropic. Requires ANTHROPIC_API_KEY.
-//
-// The tier map is flipped at module load time, not per-call. Swapping
-// providers is a server restart, not a hot path decision.
-const USE_OPENROUTER = Boolean(process.env.OPENROUTER_API_KEY);
+export const LLM_PROVIDER: 'openai' = 'openai';
 
-/**
- * The provider every tier resolves to this deployment (module-load constant,
- * same rule as TIER_MODELS below). Exported so provider-conditional features —
- * today the chat prompt-cache breakpoint, which only the patched OpenRouter
- * path knows how to split — can key off the actual wire path instead of
- * guessing from env vars.
- */
-export const LLM_PROVIDER: 'anthropic' | 'openrouter' = USE_OPENROUTER ? 'openrouter' : 'anthropic';
-
-// Derive tier → {provider, model} from MODEL_CONFIG instead of duplicating IDs.
-// Entries marked `legacy: true` exist only so telemetry can price historical
-// usage rows — they never win a tier.
-const TIER_MODELS: Record<ModelTier, { provider: 'anthropic' | 'openrouter'; model: string }> = (() => {
-  const result = {} as Record<ModelTier, { provider: 'anthropic' | 'openrouter'; model: string }>;
+const TIER_MODELS: Record<ModelTier, { provider: 'openai'; model: string }> = (() => {
+  const result = {} as Record<ModelTier, { provider: 'openai'; model: string }>;
   for (const cfg of Object.values(MODEL_CONFIG)) {
     if ((cfg as { legacy?: boolean }).legacy) continue;
-    result[cfg.tier] = USE_OPENROUTER
-      ? { provider: 'openrouter', model: cfg.openrouterId }
-      : { provider: 'anthropic', model: cfg.id };
+    result[cfg.tier] = { provider: 'openai', model: cfg.id };
   }
   return result;
 })();
 
-// Default task -> tier. Anything not listed falls through to `balanced`.
-// Conservative routing confirmed with user: only obvious wins move off balanced.
 const DEFAULT_TASK_TIER: Partial<Record<TaskLabel, ModelTier>> = {
   classify: 'cheap',
   summarize: 'cheap',
@@ -97,23 +60,12 @@ const DEFAULT_TASK_TIER: Partial<Record<TaskLabel, ModelTier>> = {
   'heartbeat-propose': 'cheap',
   'scaling-plan': 'premium',
   milestones: 'premium',
-  'task-expand': 'cheap',  // single-shot analytical; cheap tier handles cleanly.
-  'signal-classify': 'cheap',  // watch-source change classification.
-  'chat-followup': 'cheap',    // simple follow-ups (yes, tell me more, go ahead).
-  'skill-premium': 'premium',  // landing page + pitch deck Build skills need Opus.
-  // Note: tested chat → cheap (Haiku AND gpt-4o-mini). Both collapsed —
-  // 0/8 turns emitted the required :::artifact{...}::: structured outputs.
-  // Sonnet's 5 workflow_plans + 6 facts + 26 pending_actions dropped to 0.
-  // Keeping chat → balanced (Sonnet) until we either simplify the prompt
-  // contract OR find a small model that can follow it reliably.
-  //
-  // chat, monitor-agent, scoring, research, simulation, pitch-iterate, term-sheet,
-  // growth-iterate, growth-synthesize, heartbeat-reflect, skill-invoke, AND
-  // any new unmapped task -> balanced (Sonnet).
+  'task-expand': 'cheap',
+  'signal-classify': 'cheap',
+  'chat-followup': 'cheap',
+  'skill-premium': 'premium',
 };
 
-// Cached env-override map. Parsed once on first use; re-parsed if the
-// raw string changes (mostly for tests — in prod env vars are immutable).
 let cachedOverride: { raw: string | undefined; parsed: Partial<Record<string, ModelTier>> } = {
   raw: null as never,
   parsed: {},
@@ -140,17 +92,6 @@ function loadOverride(): Partial<Record<string, ModelTier>> {
   return cachedOverride.parsed;
 }
 
-/**
- * Resolve a task label to a concrete {provider, model, tier}.
- *
- * Lookup precedence:
- *   1. LLM_ROUTING_JSON env var (runtime override)
- *   2. DEFAULT_TASK_TIER map
- *   3. Fallback: 'balanced' (Sonnet) — safe default for new tasks
- *
- * Accepts any string at runtime (TaskLabel is compile-time hint); unknown
- * tasks route to `balanced` with a one-time console warning.
- */
 export function pickModel(task: TaskLabel | string): ResolvedModel {
   const override = loadOverride();
   const tier: ModelTier =
@@ -163,23 +104,12 @@ export function pickModel(task: TaskLabel | string): ResolvedModel {
   return { provider, model, tier, maxTokens };
 }
 
-/**
- * Resolve a MODEL_CONFIG key to the {provider, model} tuple for THIS
- * deployment's wire path (OpenRouter slug vs direct-Anthropic id — same rule
- * as TIER_MODELS). Used to honor users.preferred_model: the Settings page
- * stores config KEYS, and the wire identity depends on the active provider.
- * Returns null for unknown or legacy keys so callers fall through to the
- * task router instead of crashing on a stale stored preference.
- */
-export function modelForKey(key: string): { provider: 'anthropic' | 'openrouter'; model: string } | null {
+export function modelForKey(key: string): { provider: 'openai'; model: string } | null {
   const cfg = (MODEL_CONFIG as Record<string, (typeof MODEL_CONFIG)[keyof typeof MODEL_CONFIG] & { legacy?: boolean }>)[key];
   if (!cfg || cfg.legacy) return null;
-  return USE_OPENROUTER
-    ? { provider: 'openrouter', model: cfg.openrouterId }
-    : { provider: 'anthropic', model: cfg.id };
+  return { provider: 'openai', model: cfg.id };
 }
 
-/** Test-only: reset the env cache so tests can set LLM_ROUTING_JSON and re-query. */
 export function _resetRouterCache() {
   cachedOverride = { raw: null as never, parsed: {} };
 }

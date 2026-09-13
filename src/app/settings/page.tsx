@@ -30,12 +30,10 @@ interface Preferences {
   available_models: ModelOption[];
 }
 
-type Provider = 'anthropic' | 'openai' | 'openrouter';
+type Provider = 'openai';
 
 const PROVIDERS: { value: Provider; label: string; placeholder: string }[] = [
-  { value: 'anthropic', label: 'Anthropic', placeholder: 'sk-ant-...' },
-  { value: 'openai', label: 'OpenAI', placeholder: 'sk-...' },
-  { value: 'openrouter', label: 'OpenRouter', placeholder: 'sk-or-...' },
+  { value: 'openai', label: 'OpenAI', placeholder: 'sk-proj-...' },
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -45,13 +43,12 @@ export default function SettingsPage() {
   const t = useT();
 
   // API Keys state
-  // Who am I. /api/me existed; nothing in the UI had ever asked it.
   const [me, setMe] = useState<{ email: string; userId: string } | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [keys, setKeys] = useState<StoredKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(true);
   const [addingKey, setAddingKey] = useState(false);
-  const [newProvider, setNewProvider] = useState<Provider>('anthropic');
+  const [newProvider, setNewProvider] = useState<Provider>('openai');
   const [newLabel, setNewLabel] = useState('');
   const [newApiKey, setNewApiKey] = useState('');
   const [keyError, setKeyError] = useState('');
@@ -131,7 +128,7 @@ export default function SettingsPage() {
       await api.delete('/api/user/api-keys', { data: { key_id: keyId } });
       await fetchKeys();
     } catch {
-      // silently fail — key may already be deleted
+      // silently fail
     } finally {
       setDeletingId(null);
     }
@@ -156,7 +153,7 @@ export default function SettingsPage() {
     fetch('/api/me')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (!cancelled && d?.email) setMe({ email: d.email, userId: d.userId }); })
-      .catch(() => { /* the page is still usable signed-in-as-unknown */ });
+      .catch(() => { /* signed in as unknown */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -165,8 +162,6 @@ export default function SettingsPage() {
     try {
       await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     } finally {
-      // Hard navigation, not router.push: the session cookie is gone and every
-      // cached RSC payload above us was rendered for the user who just left.
       window.location.href = '/login';
     }
   }
@@ -174,10 +169,6 @@ export default function SettingsPage() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    // h-full + overflow-y-auto, NOT min-h-screen: the app shell wraps every
-    // page in <main className="flex-1 overflow-hidden"> (layout.tsx), so a
-    // page taller than the viewport was CLIPPED rather than scrolled — the
-    // sections past the fold could not be reached at all.
     <div className="h-full overflow-y-auto bg-surface-sunk">
       {/* Header */}
       <header className="h-12 border-b border-line bg-surface-sunk flex items-center px-6">
@@ -194,11 +185,7 @@ export default function SettingsPage() {
       <div className="max-w-2xl mx-auto py-8 px-6">
         <h1 className="text-xl font-semibold text-ink mb-8">{t('sett.title')}</h1>
 
-        {/* ═══ Account Section ═══
-            Settings held API keys, language, model and the tour — but nothing
-            about WHO you are signed in as, and no way to sign out. The logout
-            endpoint existed since launch with no caller: there was literally
-            no button anywhere in the product. */}
+        {/* ═══ Account Section ═══ */}
         <section className="mb-10">
           <h2 className="text-sm font-medium text-ink mb-1">{t('sett.account')}</h2>
           <p className="text-xs text-ink-5 mb-4">{t('sett.account-desc')}</p>
@@ -254,13 +241,7 @@ export default function SettingsPage() {
                   className="flex items-center justify-between bg-paper border border-line rounded-lg px-4 py-3"
                 >
                   <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      k.provider === 'anthropic'
-                        ? 'bg-accent/20 text-accent'
-                        : k.provider === 'openai'
-                          ? 'bg-moss/20 text-moss'
-                          : 'bg-moss/20 text-moss'
-                    }`}>
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-moss/20 text-moss">
                       {k.provider}
                     </span>
                     <div>
